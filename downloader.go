@@ -9,8 +9,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/3bl3gamer/tgclient/mtproto"
 	"github.com/ansel1/merry/v2"
+	"github.com/shunf4/tgclient/mtproto"
 )
 
 func clampI(a, v, b int) int {
