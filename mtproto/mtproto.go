@@ -506,7 +506,6 @@ func (m *MTProto) SendSyncRetry(
 	msg TLReq, failRetryInterval time.Duration,
 	floodNumShortRetries int, floodMaxWait time.Duration,
 ) TL {
-	failRetryInterval = 5 * time.Second
 	retryNum := -1
 	for {
 		retryNum += 1
