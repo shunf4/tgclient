@@ -68,7 +68,7 @@ func (d *Downloader) Start(tg *TGClient) {
 	d.filePartsQueue = make(chan *filePart, 4)
 	d.log = tg.log
 
-	for i := 0; i < 4; i++ {
+	for i := 0; i < 1; i++ {
 		go d.partsDownloadRoutine()
 	}
 }

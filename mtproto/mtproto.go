@@ -506,6 +506,7 @@ func (m *MTProto) SendSyncRetry(
 	msg TLReq, failRetryInterval time.Duration,
 	floodNumShortRetries int, floodMaxWait time.Duration,
 ) TL {
+	failRetryInterval = 5 * time.Second
 	retryNum := -1
 	for {
 		retryNum += 1
@@ -518,7 +519,7 @@ func (m *MTProto) SendSyncRetry(
 		}
 
 		// TL_rpc_error{ErrorCode:-503, ErrorMessage:"Timeout"}
-		if IsError(res, "Timeout") {
+		if IsError(res, "Timeout") || IsError(res, "Timedout") {
 			m.log.Warn("got RPC timeout, retrying in %s", failRetryInterval)
 			time.Sleep(failRetryInterval)
 			continue
