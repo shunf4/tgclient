@@ -561,7 +561,7 @@ func (m *MTProto) sendAndReadDirect(msg TLReq) (TL, error) {
 				close(stopSendDone)
 				return
 			case x := <-m.sendQueue:
-				m.log.Debug("direct send: sending: %#v", x)
+				m.log.Debug("[DC%d] direct send: sending: %#v", m.session.DCID, x)
 				if err := m.send(x); err != nil {
 					sendErr <- err
 					return
@@ -572,7 +572,7 @@ func (m *MTProto) sendAndReadDirect(msg TLReq) (TL, error) {
 	defer func() {
 		close(stopSend)
 		<-stopSendDone
-		m.log.Debug("direct send: done")
+		m.log.Debug("[DC%d] direct send: done", m.session.DCID)
 	}()
 
 	// small version of readRoutine: just reads, processes and checks for error from sending

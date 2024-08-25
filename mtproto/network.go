@@ -18,7 +18,7 @@ func (m *MTProto) send(packet *packetToSend) error {
 	if packet.msgID == 0 {
 		packet.msgID = m.generateMessageId()
 	}
-	m.log.Message(false, packet.msg, packet.msgID)
+	m.log.Message(false, m.session.DCID, packet.msg, packet.msgID)
 	obj := packet.msg.encode()
 
 	x := NewEncodeBuf(256)
@@ -194,7 +194,7 @@ func (m *MTProto) read() (*packetReceived, error) {
 		return nil, merry.Errorf("handshake: wrong bits of message_id: %d", mod)
 	}
 
-	m.log.Message(true, packet.msg, packet.msgID)
+	m.log.Message(true, m.session.DCID, packet.msg, packet.msgID)
 	return &packet, nil
 }
 
