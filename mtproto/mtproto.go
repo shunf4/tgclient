@@ -399,7 +399,7 @@ func (m *MTProto) reconnect(newDcID int32, mayPassToHandler bool) error {
 		pendingIDs = append(pendingIDs, id)
 	}
 	m.mutex.Unlock()
-	m.log.Debug("found %d pending packet(s)", len(pendingIDs))
+	m.log.Info("found %d pending packet(s)", len(pendingIDs))
 
 	if newDcID != 0 {
 		// renewing connection
@@ -737,9 +737,10 @@ func (m *MTProto) popPendingPackets() []*packetToSend {
 }
 func (m *MTProto) pushPendingPacketsUnlocked(packets []*packetToSend) {
 	for _, packet := range packets {
+		m.log.Info("push pending package %d", packet.msgID)
 		m.sendQueue <- packet
 	}
-	m.log.Debug("pushed %d pending packet(s)", len(packets))
+	m.log.Info("pushed %d pending packet(s)", len(packets))
 }
 func (m *MTProto) pushPendingPackets(packets []*packetToSend) {
 	m.mutex.Lock()
