@@ -499,7 +499,17 @@ func (m *MTProto) Send(msg TLReq) chan TL {
 func (m *MTProto) SendSync(msg TLReq) TL {
 	resp := make(chan TL, 1)
 	m.extSendQueue <- newPacket(msg, resp)
-	return <-resp
+	timeout := time.After(13 * time.Second)
+
+	select {
+	case <-timeout:
+		return TL_rpcError{
+			ErrorCode:    -111111,
+			ErrorMessage: "CLIENT_GEN_PSEUDO_TIMEOUT",
+		}
+	case result := <-resp:
+		return result
+	}
 }
 
 func (m *MTProto) SendSyncRetry(
@@ -510,6 +520,12 @@ func (m *MTProto) SendSyncRetry(
 	for {
 		retryNum += 1
 		res := m.SendSync(msg)
+
+		if IsError(res, "CLIENT_GEN_PSEUDO_TIMEOUT") {
+			m.log.Warn("got client gen pseudo timeout (may encountered reconnect, and server sent TL_msgDetailedInfo/TL_msgNewDetailedInfo), retrying in %s", failRetryInterval)
+			time.Sleep(failRetryInterval)
+			continue
+		}
 
 		if IsError(res, "RPC_CALL_FAIL") {
 			m.log.Warn("got RPC error, retrying in %s", failRetryInterval)

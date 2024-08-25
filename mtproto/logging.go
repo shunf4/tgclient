@@ -71,7 +71,13 @@ func (h SimpleLogHandler) StringifyMessage(isIncoming bool, dc int32, msg TL, id
 	case TL_rpcResult:
 		text = h.TLName(x) + " -> " + h.TLName(x.obj)
 	case TL_upload_getFile:
-		text = h.TLName(x) + fmt.Sprintf("x.CDNSupported, x.Limit, x.Offset, x.Precise:  %t %d %d %t", x.CDNSupported, x.Limit, x.Offset, x.Precise)
+		text = h.TLName(x) + fmt.Sprintf("  x.CDNSupported, x.Limit, x.Offset, x.Precise:  %t %d %d %t", x.CDNSupported, x.Limit, x.Offset, x.Precise)
+	case TL_msgDetailedInfo:
+		// https://core.telegram.org/mtproto/service_messages_about_messages
+		text = h.TLName(x) + fmt.Sprintf(" -> AnswerMsgId=%d MsgId=%d Status=%d (server refuses to send the response because already sent before)", x.AnswerMsgID, x.MsgID, x.Status)
+	case TL_msgNewDetailedInfo:
+		// https://core.telegram.org/mtproto/service_messages_about_messages
+		text = h.TLName(x) + fmt.Sprintf(" -> AnswerMsgId=%d Status=%d (server refuses to send the response because already sent before)", x.AnswerMsgID, x.Status)
 	default:
 		text = h.TLName(x)
 	}
