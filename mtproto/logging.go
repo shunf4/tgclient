@@ -70,6 +70,8 @@ func (h SimpleLogHandler) StringifyMessage(isIncoming bool, dc int32, msg TL, id
 		text = h.TLName(x) + " -> [" + strings.Join(names, ", ") + "]"
 	case TL_rpcResult:
 		text = h.TLName(x) + " -> " + h.TLName(x.obj)
+	case TL_upload_getFile:
+		text = h.TLName(x) + fmt.Sprintf("x.CDNSupported, x.Limit, x.Offset, x.Precise:  %t %d %d %t", x.CDNSupported, x.Limit, x.Offset, x.Precise)
 	default:
 		text = h.TLName(x)
 	}
