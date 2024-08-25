@@ -829,6 +829,7 @@ func (m *MTProto) sendRoutine() {
 		m.log.Debug("sendRoutine done")
 		m.routinesWG.Done()
 	}()
+	time.Sleep(5 * time.Second)
 	for {
 		select {
 		case <-m.routinesStop:
