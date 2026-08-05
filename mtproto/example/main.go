@@ -3,6 +3,7 @@ package main
 import (
 	"flag"
 	"log"
+	"math/rand"
 	"os"
 
 	"github.com/ansel1/merry/v2"
@@ -81,6 +82,59 @@ func start(appID int32, appHash string) error {
 		log.Printf("done: #%d %s", self.ID, mtproto.DerefOr(self.FirstName, ""))
 	}
 
-	<-chan bool(nil) //pausing forever
+	{
+		log.Println("Sending self message")
+		randomID := rand.Int63()
+		res := m.SendSync(mtproto.TL_messages_sendMessage{
+			Peer:     mtproto.TL_inputPeerSelf{},
+			Message:  "tgclient test message",
+			RandomID: randomID,
+		})
+		updates := res.(mtproto.TL_updates)
+		var msgID int32 = 0
+		for _, updTL := range updates.Updates {
+			if upd, ok := updTL.(mtproto.TL_updateMessageID); ok {
+				if upd.RandomID == randomID {
+					msgID = upd.ID
+					break
+				}
+			}
+		}
+		if msgID == 0 {
+			return merry.Errorf("new message ID not found in: %#v", updates.Updates)
+		}
+		log.Printf("done: msg ID = %d, removing now", msgID)
+		res = m.SendSync(mtproto.TL_messages_deleteMessages{
+			ID: []int32{msgID},
+		})
+		_ = res.(mtproto.TL_messages_affectedMessages)
+		log.Printf("done: message #%d removed", msgID)
+	}
+
+	{
+		log.Println("Reconnecting")
+		if err := m.Reconnect(); err != nil {
+			return merry.Wrap(err)
+		}
+		log.Println("done")
+	}
+
+	{
+		curDC := m.CopySession().DCID
+		newDC := int32(2)
+		if curDC == newDC {
+			newDC = 1
+		}
+		log.Printf("Connecting to another DC (%d -> %d)", curDC, newDC)
+		m1, err := m.NewConnection(newDC)
+		if err != nil {
+			return merry.Wrap(err)
+		}
+		res := m1.SendSync(mtproto.TL_help_getConfig{})
+		log.Printf("done, date from TL_config: %d", res.(mtproto.TL_config).Date)
+	}
+
+	log.Print("example finished, pausing forever")
+	<-chan bool(nil)
 	return nil
 }

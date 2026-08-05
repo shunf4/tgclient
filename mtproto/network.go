@@ -86,6 +86,8 @@ func (m *MTProto) send(packet *packetToSend) error {
 	if _, err := m.conn.Write(x.buf); err != nil {
 		return merry.Wrap(err)
 	}
+
+	packet.sentAt = time.Now()
 	return nil
 }
 
@@ -100,7 +102,7 @@ func (m *MTProto) read() (*packetReceived, error) {
 		return nil, merry.Wrap(err)
 	}
 	b := make([]byte, 1)
-	n, err = m.conn.Read(b)
+	_, err = m.conn.Read(b)
 	if err != nil {
 		return nil, merry.Wrap(err)
 	}
@@ -109,7 +111,7 @@ func (m *MTProto) read() (*packetReceived, error) {
 		size = int(b[0]) << 2
 	} else {
 		b := make([]byte, 3)
-		n, err = m.conn.Read(b)
+		_, err = m.conn.Read(b)
 		if err != nil {
 			return nil, merry.Wrap(err)
 		}
@@ -193,6 +195,9 @@ func (m *MTProto) read() (*packetReceived, error) {
 	if mod != 1 && mod != 3 {
 		return nil, merry.Errorf("handshake: wrong bits of message_id: %d", mod)
 	}
+
+	msgStamp := packet.msgID >> 32
+	m.lastInMsgTimeOffsetSec = msgStamp - time.Now().Unix()
 
 	m.log.Message(true, m.session.DCID, packet.msg, packet.msgID)
 	return &packet, nil
@@ -339,6 +344,9 @@ func (m *MTProto) makeAuthKey() error {
 	copy(x[0:], sha1(innerData2))
 	copy(x[20:], innerData2)
 	encryptedData2, err := doAES256IGEencrypt(x, tmpAESKey, tmpAESIV)
+	if err != nil {
+		return merry.Wrap(err)
+	}
 
 	// (send) set_client_DH_params
 	err = m.justSend(TL_setClientDHParams{nonceFirst, nonceServer, string(encryptedData2)})
@@ -374,7 +382,7 @@ func (m *MTProto) generateMessageId() int64 {
 	// "must approximately equal unixtime*2^32"
 	// "the lower 32 bits ... must present a fractional part of the time point when the message was created"
 	// "Client message identifiers are divisible by 4"
-	id := ((unixnano / nano) << 32) | ((unixnano % nano) & -4)
+	id := ((unixnano/nano + m.outMsgIDTimeOffsetSec) << 32) | ((unixnano % nano) & -4)
 
 	// "must increase monotonically"
 	// (Windows has a low time resolution, multiple UnixNano() may produce same result)

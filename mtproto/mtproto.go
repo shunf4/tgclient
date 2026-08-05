@@ -18,7 +18,7 @@ import (
 	"golang.org/x/sync/semaphore"
 )
 
-//go:generate go run scheme/generate_tl_schema.go 167 scheme/tl-schema-167.tl tl_schema.go
+//go:generate go run scheme/generate_tl_schema.go 220 scheme/tl-schema-220.tl tl_schema.go
 //go:generate gofmt -w tl_schema.go
 
 const ROUTINES_COUNT = 5
@@ -75,6 +75,9 @@ type MTProto struct {
 	handleEvent        func(TL)
 	handleReconnection func() error
 
+	lastInMsgTimeOffsetSec int64
+	outMsgIDTimeOffsetSec  int64
+
 	dcOptions []TL_dcOption
 }
 
@@ -90,6 +93,7 @@ type packetToSend struct {
 	msg     TL
 	resp    chan TL
 	needAck bool
+	sentAt  time.Time
 }
 
 func newPacket(msg TL, resp chan TL) *packetToSend {
@@ -104,6 +108,7 @@ type MTParams struct {
 	ConnDialer proxy.Dialer
 	SessStore  SessionStore
 	Session    *SessionInfo
+	TimeOffset time.Duration
 }
 
 func NewMTProto(appID int32, appHash string) *MTProto {
@@ -167,6 +172,8 @@ func NewMTProtoExt(params MTParams) *MTProto {
 
 		connectSemaphore: semaphore.NewWeighted(1),
 		reconnSemaphore:  semaphore.NewWeighted(1),
+
+		outMsgIDTimeOffsetSec: int64(params.TimeOffset / time.Second),
 	}
 	return m
 }
@@ -197,7 +204,6 @@ func (m *MTProto) InitSession(sessEncrIsReady bool) error {
 		m.encryptionReady = sessEncrIsReady
 	}
 
-	rand.Seed(time.Now().UnixNano())
 	m.session.sessionId = rand.Int63()
 	return nil
 }
@@ -231,6 +237,10 @@ func (m *MTProto) SetReconnectionHandler(handler func() error) {
 }
 
 func (m *MTProto) initConection() error {
+	m.lastOutMsgID = 0
+	m.lastInMsgTimeOffsetSec = 0
+	// no need to reset m.lastOutSeqNo otherwise after reconnection TG will respond with TL_badMsgNotification{ErrorCode:32} (msg_seqno too low)
+
 	m.log.Info("connecting to DC %d (%s)...", m.session.DCID, m.session.Addr)
 	var err error
 	m.conn, err = m.connDialer.Dial("tcp", m.session.Addr)
@@ -292,9 +302,15 @@ func (m *MTProto) Connect() error {
 		if err == nil {
 			break
 		}
-		m.log.Error(err, "failed to connect")
+
+		if IsWrongClientTimeError(err) {
+			m.log.Info("client time seems inaccurate, applying correction")
+			m.outMsgIDTimeOffsetSec = m.lastInMsgTimeOffsetSec
+		} else {
+			m.log.Error(err, "failed to connect")
+		}
 		m.log.Info("trying to connect one more time (%d)", i)
-		time.Sleep(1)
+		time.Sleep(time.Second)
 	}
 	if err != nil {
 		return merry.Wrap(err)
@@ -468,6 +484,7 @@ func (m *MTProto) NewConnection(dcID int32) (*MTProto, error) {
 		Session:    session,
 		LogHandler: m.log.Hnd,
 		ConnDialer: m.connDialer,
+		TimeOffset: time.Duration(m.outMsgIDTimeOffsetSec) * time.Second,
 	})
 	if err := newMT.InitSession(encrIsReady); err != nil {
 		return nil, merry.Wrap(err)
@@ -482,7 +499,7 @@ func (m *MTProto) NewConnection(dcID int32) (*MTProto, error) {
 		if !ok {
 			return nil, merry.New(UnexpectedTL("auth export", res))
 		}
-		res = newMT.SendSync(TL_auth_importAuthorization{ID: exported.ID, Bytes: exported.Bytes})
+		res = newMT.SendSync(TL_auth_importAuthorization(exported))
 		if _, ok := res.(TL_auth_authorization); !ok {
 			return nil, merry.New(UnexpectedTL("auth import", res))
 		}
@@ -534,6 +551,7 @@ func (m *MTProto) SendSyncRetry(
 		}
 
 		// TL_rpc_error{ErrorCode:-503, ErrorMessage:"Timeout"}
+		// UPD: seems the message was checnged to "Timedout". Not sure if old one is absolete or not. Checking both just in case.
 		if IsError(res, "Timeout") || IsError(res, "Timedout") {
 			m.log.Warn("got RPC timeout, retrying in %s", failRetryInterval)
 			time.Sleep(failRetryInterval)
@@ -735,6 +753,17 @@ func (m *MTProto) Auth(authData AuthDataProvider) error {
 	return nil
 }
 
+//	func (m *MTProto) popPendingPackets() []*packetToSend {
+//		m.mutex.Lock()
+//		defer m.mutex.Unlock()
+//		return m.popPendingPacketsUnlocked()
+//	}
+//	func (m *MTProto) pushPendingPackets(packets []*packetToSend) {
+//		m.mutex.Lock()
+//		defer m.mutex.Unlock()
+//		m.pushPendingPacketsUnlocked(packets)
+//	}
+
 func (m *MTProto) popPendingPacketsUnlocked() []*packetToSend {
 	packets := make([]*packetToSend, 0, len(m.msgsByID))
 	msgs := make([]TL, 0)
@@ -746,22 +775,12 @@ func (m *MTProto) popPendingPacketsUnlocked() []*packetToSend {
 	m.log.Debug("popped %d pending packet(s): %#v", len(packets), msgs)
 	return packets
 }
-func (m *MTProto) popPendingPackets() []*packetToSend {
-	m.mutex.Lock()
-	defer m.mutex.Unlock()
-	return m.popPendingPacketsUnlocked()
-}
 func (m *MTProto) pushPendingPacketsUnlocked(packets []*packetToSend) {
 	for _, packet := range packets {
 		m.log.Info("push pending package %d", packet.msgID)
 		m.sendQueue <- packet
 	}
 	m.log.Info("pushed %d pending packet(s)", len(packets))
-}
-func (m *MTProto) pushPendingPackets(packets []*packetToSend) {
-	m.mutex.Lock()
-	defer m.mutex.Unlock()
-	m.pushPendingPacketsUnlocked(packets)
 }
 func (m *MTProto) resendPendingPackets() {
 	m.mutex.Lock()
@@ -805,25 +824,6 @@ func (m *MTProto) GetContacts() error {
 
 	return nil
 }
-
-/*func (m *MTProto) SendMessage(user_id int32, msg string) error {
-	resp := make(chan TL, 1)
-	m.sendQueue <- packetToSend{
-		TL_messages_sendMessage{
-			TL_inputPeerContact{user_id},
-			msg,
-			rand.Int63(),
-		},
-		resp,
-	}
-	x := <-resp
-	_, ok := x.(TL_messages_sentMessage)
-	if !ok {
-		return merry.Errorf("RPC: %#v", x)
-	}
-
-	return nil
-}*/
 
 func (m *MTProto) pingRoutine() {
 	defer func() {
@@ -928,10 +928,10 @@ func (m *MTProto) debugRoutine() {
 
 		m.mutex.Lock()
 		count := 0
-		for id := range m.msgsByID {
-			delta := time.Now().Unix() - (id >> 32)
-			if delta > 5 {
-				m.log.Warn("msgsByID: #%d: is here for %ds", id, delta)
+		for id, packet := range m.msgsByID {
+			delta := time.Since(packet.sentAt)
+			if delta > 5*time.Second {
+				m.log.Warn("msgsByID: #%d: is here for %ds", id, int64(delta/time.Second))
 			}
 			count++
 		}
